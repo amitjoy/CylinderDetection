@@ -14,12 +14,12 @@ class CylinderLogger:
                 f.write('')  # Clear file at start
     def log(self, msg):
         if self.mode == 'console':
-            print(msg)
+            (CylinderDetector.LOGGER or print)(msg)
         elif self.mode == 'file' and self.log_file is not None:
             with open(self.log_file, 'a') as f:
                 f.write(msg + '\n')
         else:
-            print(msg)
+            (CylinderDetector.LOGGER or print)(msg)
 
 import os
 
@@ -109,13 +109,32 @@ class CylinderDetector:
                 logger(msg)
             else:
                 logger.log(msg)
+        # Throttling parameters
+        MAX_REGION_LOGS = 10  # log details for first 10 regions
+        REGION_LOG_EVERY = 1000  # then log every 1000th region
+        region_count = 0
+        accepted_count = 0
+        rejected_count = 0
+        region_sizes = []
         for idx in range(N):
             if visited[idx]:
                 continue
             # Start region growing
-            if CylinderDetector.DEBUG_PRINTS:
+            region_count += 1
+            log_this_region = (
+                region_count <= MAX_REGION_LOGS or
+                region_count % REGION_LOG_EVERY == 0
+            )
+            if CylinderDetector.DEBUG_PRINTS and log_this_region:
                 logger = CylinderDetector.LOGGER or print
-                msg = f"[DEBUG][find_connected_components] Starting region from idx={idx}"
+                msg = f"[DEBUG][find_connected_components] Starting region from idx={idx} (region {region_count})"
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
+            elif CylinderDetector.DEBUG_PRINTS and region_count == MAX_REGION_LOGS + 1:
+                logger = CylinderDetector.LOGGER or print
+                msg = f"[DEBUG][find_connected_components] ... (further region logs suppressed; will log every {REGION_LOG_EVERY}th region)"
                 if callable(logger):
                     logger(msg)
                 else:
@@ -137,15 +156,12 @@ class CylinderDetector:
                         if dot < self.normal_threshold:
                             continue
                     queue.append(n)
-            if CylinderDetector.DEBUG_PRINTS:
+            region_sizes.append(len(current))
+            if CylinderDetector.DEBUG_PRINTS and log_this_region:
                 logger = CylinderDetector.LOGGER or print
-                msg = f"[DEBUG][find_connected_components] Finished region with size={len(current)}"
-                if callable(logger):
-                    logger(msg)
-                else:
-                    logger.log(msg)
             if len(current) >= self.min_component_points:
-                if CylinderDetector.DEBUG_PRINTS:
+                accepted_count += 1
+                if CylinderDetector.DEBUG_PRINTS and log_this_region:
                     logger = CylinderDetector.LOGGER or print
                     msg = f"[DEBUG][find_connected_components] --> Region accepted as component."
                     if callable(logger):
@@ -154,13 +170,28 @@ class CylinderDetector:
                         logger.log(msg)
                 components.append(ConnectedComponent(current, direction))
             else:
-                if CylinderDetector.DEBUG_PRINTS:
+                rejected_count += 1
+                if CylinderDetector.DEBUG_PRINTS and log_this_region:
                     logger = CylinderDetector.LOGGER or print
                     msg = f"[DEBUG][find_connected_components] --> Region rejected (too small)."
                     if callable(logger):
                         logger(msg)
                     else:
                         logger.log(msg)
+        # Summary statistics
+        if CylinderDetector.DEBUG_PRINTS:
+            logger = CylinderDetector.LOGGER or print
+            msg = (
+                f"[DEBUG][find_connected_components] Summary: {region_count} regions processed, "
+                f"{accepted_count} accepted, {rejected_count} rejected. "
+                f"Region sizes: min={min(region_sizes) if region_sizes else 0}, "
+                f"max={max(region_sizes) if region_sizes else 0}, "
+                f"mean={np.mean(region_sizes) if region_sizes else 0:.2f}"
+            )
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
         return components
 
     def project_component(self, component):
