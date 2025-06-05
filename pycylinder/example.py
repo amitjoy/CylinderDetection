@@ -2,12 +2,15 @@
 Example: Run cylinder detection on a synthetic cylinder point cloud.
 """
 from pointcloud import PointCloud
-from detector import CylinderDetector
+from detector import CylinderDetector, CylinderLogger
 from synthetic import generate_cylinder_point_cloud
 import open3d as o3d
 import numpy as np
 
 def main():
+    # Set up console logger for debug output
+    CylinderDetector.LOGGER = CylinderLogger(mode='console')
+    logger = CylinderDetector.LOGGER or print
     import numpy as np
     np.random.seed(42)  # For reproducible synthetic data
     # Generate a synthetic cylinder
@@ -16,16 +19,16 @@ def main():
     radius = 0.5
     height = 2.0
     pcd = generate_cylinder_point_cloud(center, axis, radius, height, n_points=2000, noise=0.01)
-    print(f"Generated {np.asarray(pcd.points).shape[0]} points.")
-    print("\n[GROUND TRUTH CYLINDER]")
-    print(f"  Center: {center}")
-    print(f"  Axis:   {axis}")
-    print(f"  Radius: {radius}")
-    print(f"  Height: {height}")
+    logger(f"Generated {np.asarray(pcd.points).shape[0]} points.")
+    logger("\n[GROUND TRUTH CYLINDER]")
+    logger(f"  Center: {center}")
+    logger(f"  Axis:   {axis}")
+    logger(f"  Radius: {radius}")
+    logger(f"  Height: {height}")
 
     # Estimate normals
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=50))
-    print(f"Estimated {len(pcd.normals)} normals.")
+    logger(f"Estimated {len(pcd.normals)} normals.")
     # Wrap in pycylinder PointCloud
     pc = PointCloud(pcd)
     # Run detection with relaxed parameters
@@ -48,9 +51,9 @@ def main():
     )
 
 
-    print("Running detection...")
+    logger("Running detection...")
     cylinders = detector.detect()
-    print(f"Detected {len(cylinders)} cylinders.")
+    logger(f"Detected {len(cylinders)} cylinders.")
     # Compare detected cylinders to ground truth
     def axis_angle_deg(a, b):
         a = a / np.linalg.norm(a)
@@ -62,7 +65,7 @@ def main():
     gt_axis = axis / np.linalg.norm(axis)
     gt_radius = radius
 
-    print("\n[DETECTED CYLINDERS]")
+    logger("\n[DETECTED CYLINDERS]")
     min_err = float('inf')
     best_idx = -1
     best_errs = None
@@ -71,19 +74,19 @@ def main():
         axis_err = axis_angle_deg(cyl.axis, gt_axis)
         radius_err = abs(cyl.radius - gt_radius)
         combined_err = center_dist + axis_err/10.0 + radius_err  # simple combined metric
-        print(f"Cylinder {i}: center={cyl.center}, axis={cyl.axis}, radius={cyl.radius}, inliers={len(cyl.inliers)}")
-        print(f"    [Error] center_dist={center_dist:.4f}, axis_angle_deg={axis_err:.2f}, radius_err={radius_err:.4f}, combined_err={combined_err:.4f}")
+        logger(f"Cylinder {i}: center={cyl.center}, axis={cyl.axis}, radius={cyl.radius}, inliers={len(cyl.inliers)}")
+        logger(f"    [Error] center_dist={center_dist:.4f}, axis_angle_deg={axis_err:.2f}, radius_err={radius_err:.4f}, combined_err={combined_err:.4f}")
         if combined_err < min_err:
             min_err = combined_err
             best_idx = i
             best_errs = (center_dist, axis_err, radius_err)
     if best_idx >= 0:
-        print(f"\n[NEAREST DETECTED CYLINDER: {best_idx}]")
+        logger(f"\n[NEAREST DETECTED CYLINDER: {best_idx}]")
         cyl = cylinders[best_idx]
-        print(f"  center={cyl.center}, axis={cyl.axis}, radius={cyl.radius}, inliers={len(cyl.inliers)}")
-        print(f"  Errors: center_dist={best_errs[0]:.4f}, axis_angle_deg={best_errs[1]:.2f}, radius_err={best_errs[2]:.4f}")
+        logger(f"  center={cyl.center}, axis={cyl.axis}, radius={cyl.radius}, inliers={len(cyl.inliers)}")
+        logger(f"  Errors: center_dist={best_errs[0]:.4f}, axis_angle_deg={best_errs[1]:.2f}, radius_err={best_errs[2]:.4f}")
     else:
-        print("\n[No detected cylinders]")
+        logger("\n[No detected cylinders]")
 
     # --- Visualize ground truth and best detected cylinder as meshes ---
     def create_cylinder_mesh(center, axis, radius, height, color=[1, 0, 0]):
@@ -143,47 +146,47 @@ def main():
         # Visualize point cloud (gray)
         pcd.paint_uniform_color([0.5, 0.5, 0.5])
         draw_plotly([pcd] + meshes, width=800, height=600)
-        print("Visualization succeeded.")
+        logger("Visualization succeeded.")
     except Exception as e:
-        print(f"Visualization failed: {e}")
+        logger(f"Visualization failed: {e}")
 
     # [CLEANUP] Removed old mesh visualization logic based on filtered_cylinders.
     # Visualization is now handled above with ground truth and best detected cylinder meshes.
 
-    print("\n[DIAG] Minimal visualization attempts:")
+    logger("\n[DIAG] Minimal visualization attempts:")
     # 1. Visualize only the point cloud
-    print("[TEST] Visualizing ONLY the point cloud...")
+    logger("[TEST] Visualizing ONLY the point cloud...")
     try:
         o3d.visualization.draw_plotly([pcd])
-        print("[RESULT] Point cloud visualization succeeded.")
+        logger("[RESULT] Point cloud visualization succeeded.")
     except Exception as e:
-        print("[FAIL] Point cloud visualization crashed:", e)
+        logger("[FAIL] Point cloud visualization crashed:", e)
 
     # 2. Visualize only the ground truth mesh (if available)
-    print("[TEST] Visualizing ONLY the ground truth cylinder mesh (no point cloud)...")
+    logger("[TEST] Visualizing ONLY the ground truth cylinder mesh (no point cloud)...")
     try:
         gt_mesh = create_cylinder_mesh(center, axis, radius, height, color=[0, 1, 0])
         o3d.visualization.draw_plotly([gt_mesh])
-        print("[RESULT] Single mesh visualization succeeded.")
+        logger("[RESULT] Single mesh visualization succeeded.")
     except Exception as e:
-        print("[FAIL] Single mesh visualization crashed:", e)
+        logger("[FAIL] Single mesh visualization crashed:", e)
 
     # 3. Visualize point cloud + ground truth mesh
-    print("[TEST] Visualizing point cloud + ground truth mesh...")
+    logger("[TEST] Visualizing point cloud + ground truth mesh...")
     try:
         o3d.visualization.draw_plotly([pcd, gt_mesh])
-        print("[RESULT] Point cloud + mesh visualization succeeded.")
+        logger("[RESULT] Point cloud + mesh visualization succeeded.")
     except Exception as e:
-        print("[FAIL] Point cloud + mesh visualization crashed:", e)
+        logger("[FAIL] Point cloud + mesh visualization crashed:", e)
 
     # 4. Visualize all selected meshes + point cloud
-    print("[TEST] Visualizing all detected cylinders as meshes...")
+    logger("[TEST] Visualizing all detected cylinders as meshes...")
     try:
         o3d.visualization.draw_plotly([pcd, *meshes])
-        print("[RESULT] Full visualization succeeded.")
+        logger("[RESULT] Full visualization succeeded.")
     except Exception as e:
-        print("[FAIL] Full visualization crashed:", e)
-        print("[INFO] Visualization skipped.")
+        logger("[FAIL] Full visualization crashed:", e)
+        logger("[INFO] Visualization skipped.")
 
 if __name__ == "__main__":
     main()

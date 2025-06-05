@@ -4,10 +4,30 @@ CylinderDetector: Main detection pipeline (stub)
 from geometry import Cylinder
 from utils import fibonacci_sphere
 
+class CylinderLogger:
+    def __init__(self, mode='console', log_file=None):
+        self.mode = mode
+        self.log_file = log_file
+        if self.mode == 'file' and self.log_file is not None:
+            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+            with open(self.log_file, 'w') as f:
+                f.write('')  # Clear file at start
+    def log(self, msg):
+        if self.mode == 'console':
+            print(msg)
+        elif self.mode == 'file' and self.log_file is not None:
+            with open(self.log_file, 'a') as f:
+                f.write(msg + '\n')
+        else:
+            print(msg)
+
+import os
+
 class CylinderDetector:
     # Set CylinderDetector.DEBUG_PRINTS = True to enable all debug output globally.
     # Do not use per-instance debug toggling.
     DEBUG_PRINTS = False
+    LOGGER = None
     def __init__(self, point_cloud, directions_samples=60, distance_threshold=0.02, normal_threshold=0.95, min_component_points=30, circle_residual=0.01, min_length=0.05, min_inliers=30, max_radius=2.0, angle_thresh=0.1, center_thresh=0.05, radius_thresh=0.05, debug_prints=None):
         # debug_prints argument is ignored; use CylinderDetector.DEBUG_PRINTS
 
@@ -39,22 +59,47 @@ class CylinderDetector:
         normals = self.point_cloud.normals_numpy() if len(self.point_cloud.o3d_pcd.normals) else None
         N = len(points)
         if CylinderDetector.DEBUG_PRINTS:
-            print(f"[DEBUG][find_connected_components] Direction: {direction}, N_points={N}, N_normals={len(normals) if normals is not None else 0}")
-            print(f"[DEBUG][find_connected_components] distance_threshold={self.distance_threshold}, normal_threshold={self.normal_threshold}, min_component_points={self.min_component_points}")
+            logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG][find_connected_components] Direction: {direction}, N_points={N}, N_normals={len(normals) if normals is not None else 0}"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
+            logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG][find_connected_components] distance_threshold={self.distance_threshold}, normal_threshold={self.normal_threshold}, min_component_points={self.min_component_points}"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
         for i in range(min(10, N)):
             pt_str = np.array2string(points[i], precision=3)
             if normals is not None:
                 norm_str = np.array2string(normals[i], precision=3)
                 if CylinderDetector.DEBUG_PRINTS:
-                    print(f"  Point {i}: {pt_str}, Normal: {norm_str}")
+                    logger = CylinderDetector.LOGGER or print
+                    msg = f"  Point {i}: {pt_str}, Normal: {norm_str}"
+                    if callable(logger):
+                        logger(msg)
+                    else:
+                        logger.log(msg)
             else:
                 if CylinderDetector.DEBUG_PRINTS:
-                    print(f"  Point {i}: {pt_str}, Normal: None")
+                    logger = CylinderDetector.LOGGER or print
+                    msg = f"  Point {i}: {pt_str}, Normal: None"
+                    if callable(logger):
+                        logger(msg)
+                    else:
+                        logger.log(msg)
             # Print number of neighbors for this point
             dists = np.linalg.norm(points - points[i], axis=1)
             neighbors = np.where((dists < self.distance_threshold))[0]
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"    [DEBUG] Num neighbors within distance_threshold: {len(neighbors)}")
+                logger = CylinderDetector.LOGGER or print
+                msg = f"    [DEBUG] Num neighbors within distance_threshold: {len(neighbors)}"
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
         visited = np.zeros(N, dtype=bool)
         components = []
         for idx in range(N):
@@ -62,7 +107,12 @@ class CylinderDetector:
                 continue
             # Start region growing
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG][find_connected_components] Starting region from idx={idx}")
+                logger = CylinderDetector.LOGGER or print
+                msg = f"[DEBUG][find_connected_components] Starting region from idx={idx}"
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
             queue = [idx]
             current = []
             while queue:
@@ -81,14 +131,29 @@ class CylinderDetector:
                             continue
                     queue.append(n)
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG][find_connected_components] Finished region with size={len(current)}")
+                logger = CylinderDetector.LOGGER or print
+                msg = f"[DEBUG][find_connected_components] Finished region with size={len(current)}"
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
             if len(current) >= self.min_component_points:
                 if CylinderDetector.DEBUG_PRINTS:
-                    print(f"[DEBUG][find_connected_components] --> Region accepted as component.")
+                    logger = CylinderDetector.LOGGER or print
+                    msg = f"[DEBUG][find_connected_components] --> Region accepted as component."
+                    if callable(logger):
+                        logger(msg)
+                    else:
+                        logger.log(msg)
                 components.append(ConnectedComponent(current, direction))
             else:
                 if CylinderDetector.DEBUG_PRINTS:
-                    print(f"[DEBUG][find_connected_components] --> Region rejected (too small).")
+                    logger = CylinderDetector.LOGGER or print
+                    msg = f"[DEBUG][find_connected_components] --> Region rejected (too small)."
+                    if callable(logger):
+                        logger(msg)
+                    else:
+                        logger.log(msg)
         return components
 
     def project_component(self, component):
@@ -126,7 +191,12 @@ class CylinderDetector:
         cylinders = []
         directions = fibonacci_sphere(self.directions_samples)
         if CylinderDetector.DEBUG_PRINTS:
-            print(f"[DEBUG] Sampled {len(directions)} directions for detection.")
+            logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG] Sampled {len(directions)} directions for detection."
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
         circle_detector = Circle2DRansac(residual_threshold=self.circle_residual)
         total_components = 0
         total_circles = 0
@@ -134,7 +204,12 @@ class CylinderDetector:
         for direction_idx, direction in enumerate(directions):
             components = self.find_connected_components(direction)
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG] Direction {direction_idx}: Found {len(components)} connected components.")
+                logger = CylinderDetector.LOGGER or print
+                msg = f"[DEBUG] Direction {direction_idx}: Found {len(components)} connected components."
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
             total_components += len(components)
             for comp_idx, comp in enumerate(components):
                 proj2d = self.project_component(comp)
@@ -153,14 +228,29 @@ class CylinderDetector:
                     total_valid_candidates += 1
                     cylinders.append(candidate)
         if CylinderDetector.DEBUG_PRINTS:
-            print(f"[DEBUG] Total connected components across all directions: {total_components}")
-            print(f"[DEBUG] Total 2D circles detected: {total_circles}")
-            print(f"[DEBUG] Total valid cylinder candidates before merging: {total_valid_candidates}")
+            logger = CylinderDetector.LOGGER or print
+            msg1 = f"[DEBUG] Total connected components across all directions: {total_components}"
+            msg2 = f"[DEBUG] Total 2D circles detected: {total_circles}"
+            msg3 = f"[DEBUG] Total valid cylinder candidates before merging: {total_valid_candidates}"
+            for msg in [msg1, msg2, msg3]:
+                if callable(logger):
+                    logger(msg)
+                else:
+                    logger.log(msg)
         # Post-processing: merge overlapping cylinders
         cylinders = self.merge_cylinders(cylinders)
         cylinders = self.merge_tiny_clusters(cylinders)
         if CylinderDetector.DEBUG_PRINTS:
-            print(f"[DEBUG] Total cylinders after merging: {len(cylinders)}")
+            logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG] Total cylinders after merging: {len(cylinders)}"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
+        if callable(logger):
+            logger(msg)
+        else:
+            logger.log(msg)
         return cylinders
 
     def is_cylinder_valid(self, cylinder):
@@ -169,11 +259,21 @@ class CylinderDetector:
         """
         if len(cylinder.inliers) < self.min_inliers:
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG] Cylinder rejected: too few inliers ({len(cylinder.inliers)} < {self.min_inliers})")
+                logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG] Cylinder rejected: too few inliers ({len(cylinder.inliers)} < {self.min_inliers})"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
             return False
         if not (0 < cylinder.radius < self.max_radius):
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG] Cylinder rejected: invalid radius ({cylinder.radius})")
+                logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG] Cylinder rejected: invalid radius ({cylinder.radius})"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
             return False
         # Check length (project inliers onto axis)
         from numpy import dot
@@ -183,7 +283,12 @@ class CylinderDetector:
         length = proj.max() - proj.min()
         if length < self.min_length:
             if CylinderDetector.DEBUG_PRINTS:
-                print(f"[DEBUG] Cylinder rejected: too short (length {length} < {self.min_length})")
+                logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG] Cylinder rejected: too short (length {length} < {self.min_length})"
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
             return False
         return True
 
