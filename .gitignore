@@ -3,3 +3,4 @@ ReverseEngineering.pro.user
 **/*pycache*
 **/pycylinder_venv*/*
 .DS_Store
+**/testdata/*
