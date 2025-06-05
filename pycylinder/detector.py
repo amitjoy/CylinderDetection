@@ -102,6 +102,13 @@ class CylinderDetector:
                     logger.log(msg)
         visited = np.zeros(N, dtype=bool)
         components = []
+        if CylinderDetector.DEBUG_PRINTS:
+            logger = CylinderDetector.LOGGER or print
+            msg = f"[DEBUG][find_connected_components] Beginning region growing over {N} points (potential regions)."
+            if callable(logger):
+                logger(msg)
+            else:
+                logger.log(msg)
         for idx in range(N):
             if visited[idx]:
                 continue
