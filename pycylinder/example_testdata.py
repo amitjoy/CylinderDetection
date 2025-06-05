@@ -1,11 +1,10 @@
 import open3d as o3d
 import numpy as np
 import os
-from detector import CylinderDetector, CylinderLogger
+from detector import CylinderDetector, CylinderLogger, fibonacci_sphere
 
 def main():
     # Set up file logger for debug output
-    from detector import CylinderLogger, CylinderDetector
     CylinderDetector.LOGGER = CylinderLogger(mode='file', log_file='../../logs/cylinder_debug.log')
     logger = CylinderDetector.LOGGER or print
     # Path to test data OBJ file
@@ -83,18 +82,21 @@ def main():
     # Enable debug prints globally
     CylinderDetector.DEBUG_PRINTS = True
 
-    # Run cylinder detection
-    # Sweep over several distance_threshold values
-    distance_thresholds = [300, 500, 700, 900, 1200]
+    # Automated threshold selection for region growing
     min_visualize_size = 100  # Only visualize regions with at least this many points
-
-    from detector import fibonacci_sphere
     directions = fibonacci_sphere(60)
     first_direction = directions[0]
-
-    for dist_thresh in distance_thresholds:
-        msg = f"\n===== distance_threshold = {dist_thresh} ====="
-        logger.log(msg)
+    # Compute mean nearest neighbor distance
+    from sklearn.neighbors import NearestNeighbors
+    nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(points)
+    distances, _ = nbrs.kneighbors(points)
+    mean_spacing = np.mean(distances[:, 1])
+    logger.log(f"Mean nearest neighbor distance: {mean_spacing}")
+    multipliers = [2, 3, 4, 5, 7, 10, 15, 20, 30, 50]
+    chosen_threshold = None
+    for k in multipliers:
+        dist_thresh = mean_spacing * k
+        logger.log(f"\nTrying distance_threshold = {dist_thresh:.3f} (k={k})")
         detector = CylinderDetector(
             pc,
             directions_samples=60,
@@ -111,24 +113,54 @@ def main():
         )
         regions = detector.find_connected_components(first_direction)
         region_sizes = [len(region.indices) for region in regions]
-        msg = f"Found {len(regions)} regions."
-        logger.log(msg)
-        msg = f"Region sizes: {region_sizes}"
-        logger.log(msg)
+        logger.log(f"Found {len(regions)} regions.")
+        logger.log(f"Region sizes: {region_sizes}")
         large_regions = [region for region in regions if len(region.indices) >= min_visualize_size]
-        msg = f"Regions with >= {min_visualize_size} points: {len(large_regions)}"
-        logger.log(msg)
-        if large_regions:
-            region_colors = np.full(points.shape, 0.7)  # gray
+        logger.log(f"Regions with >= {min_visualize_size} points: {len(large_regions)}")
+        if len(large_regions) >= 20:
+            chosen_threshold = dist_thresh
+            logger.log(f"Selected distance_threshold = {dist_thresh:.3f} (k={k}) with {len(large_regions)} large regions.")
+            # Visualize the chosen segmentation
+            region_colors = np.full((len(points), 3), 0.7)
             for i, region in enumerate(large_regions):
                 color = np.random.rand(3)
                 region_colors[region.indices] = color
-            # Show all large regions in one plot
             pcd.colors = o3d.utility.Vector3dVector(region_colors)
             o3d.visualization.draw([pcd])
-        else:
-            msg = "No regions above visualization size threshold."
-            logger.log(msg)
+            break
+    if chosen_threshold is None:
+        logger.log("No threshold produced at least 20 large regions. Using the largest tried value.")
+        chosen_threshold = mean_spacing * multipliers[-1]
+
+    # Use the chosen threshold for cylinder detection
+    detector = CylinderDetector(
+        pc,
+        directions_samples=60,
+        distance_threshold=chosen_threshold,
+        normal_threshold=0.92,
+        min_component_points=5,
+        circle_residual=0.03,
+        min_length=0.08,
+        min_inliers=5,
+        max_radius=2.0,
+        angle_thresh=0.2,
+        center_thresh=0.12,
+        radius_thresh=0.08
+    )
+    cylinders = detector.detect()
+    logger.log(f"Detected {len(cylinders)} cylinders.")
+
+    # Overlay detected cylinders on input point cloud
+    base_colors = np.full(points.shape, 0.7)  # gray
+    if len(cylinders) > 0:
+        for idx, cyl in enumerate(cylinders):
+            # Color inliers for each cylinder
+            color = np.random.rand(3)
+            base_colors[cyl.inliers] = color
+        pcd.colors = o3d.utility.Vector3dVector(base_colors)
+        o3d.visualization.draw([pcd])
+    else:
+        logger.log("No cylinders to overlay.")
 
     # After parameter sweep, run detection with the last threshold and log number of cylinders detected
     detector = CylinderDetector(
@@ -149,8 +181,6 @@ def main():
     logger.log(f"Detected {len(cylinders)} cylinders.")
 
     # Overlay detected cylinders on input point cloud
-    import open3d as o3d
-    import numpy as np
     base_colors = np.full(points.shape, 0.7)  # gray
     if len(cylinders) > 0:
         for idx, cyl in enumerate(cylinders):
