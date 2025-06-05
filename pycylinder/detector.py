@@ -158,6 +158,7 @@ class CylinderDetector:
             print(f"[DEBUG] Total valid cylinder candidates before merging: {total_valid_candidates}")
         # Post-processing: merge overlapping cylinders
         cylinders = self.merge_cylinders(cylinders)
+        cylinders = self.merge_tiny_clusters(cylinders)
         if CylinderDetector.DEBUG_PRINTS:
             print(f"[DEBUG] Total cylinders after merging: {len(cylinders)}")
         return cylinders
@@ -216,4 +217,37 @@ class CylinderDetector:
                 inliers = sum([c.inliers for c in group], [])
                 merged.append(type(group[0])(centers.mean(axis=0), axes.mean(axis=0), radii.mean(), inliers))
             used.add(i)
+        return merged
+
+    def merge_tiny_clusters(self, cylinders, min_inliers_merge=10, axis_thresh=0.2, center_thresh=0.1, radius_thresh=0.1):
+        """
+        Merge tiny cylinders (with inlier count below min_inliers_merge) into their nearest similar larger neighbor.
+        """
+        import numpy as np
+        if not cylinders:
+            return []
+        large = [c for c in cylinders if len(c.inliers) >= min_inliers_merge]
+        tiny = [c for c in cylinders if len(c.inliers) < min_inliers_merge]
+        merged = large[:]
+        for tc in tiny:
+            best = None
+            best_score = float('inf')
+            for lc in large:
+                angle = np.arccos(np.clip(np.dot(tc.axis, lc.axis), -1, 1))
+                center_dist = np.linalg.norm(tc.center - lc.center)
+                radius_diff = abs(tc.radius - lc.radius)
+                score = angle + center_dist + radius_diff
+                if angle < axis_thresh and center_dist < center_thresh and radius_diff < radius_thresh and score < best_score:
+                    best = lc
+                    best_score = score
+            if best is not None:
+                # Merge inliers and re-average center, axis, radius
+                all_inliers = best.inliers + tc.inliers
+                centers = np.vstack([best.center, tc.center])
+                axes = np.vstack([best.axis, tc.axis])
+                radii = np.array([best.radius, tc.radius])
+                merged.remove(best)
+                merged.append(type(best)(centers.mean(axis=0), axes.mean(axis=0), radii.mean(), all_inliers))
+            else:
+                merged.append(tc)
         return merged

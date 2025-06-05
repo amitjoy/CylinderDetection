@@ -1,6 +1,5 @@
 ReverseEngineering.pro.user
 **/*.pro.user
 **/*pycache*
-**/pycylinder_venv
 **/pycylinder_venv*/*
 .DS_Store
