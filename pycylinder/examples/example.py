@@ -1,16 +1,30 @@
 """
 Example: Run cylinder detection on a synthetic cylinder point cloud.
 """
-from pointcloud import PointCloud
-from detector import CylinderDetector, CylinderLogger
-from synthetic import generate_cylinder_point_cloud
-import open3d as o3d
+import os
+import sys
 import numpy as np
+import open3d as o3d
+
+# Add the current directory to the path to allow importing local modules
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# Import from the pycylinder package
+from pycylinder.detector import CylinderDetector
+from pycylinder.logger import CylinderLogger, set_logger
+from pycylinder.synthetic import generate_cylinder_point_cloud
+from pycylinder.pointcloud import PointCloud
 
 def main():
     # Set up console logger for debug output
-    CylinderDetector.LOGGER = CylinderLogger(mode='console')
-    logger = CylinderDetector.LOGGER or print
+    logger = CylinderLogger(mode='console')
+    set_logger(logger)
+    
     import numpy as np
     np.random.seed(42)  # For reproducible synthetic data
     # Generate a synthetic cylinder
@@ -160,7 +174,7 @@ def main():
         o3d.visualization.draw_plotly([pcd])
         logger("[RESULT] Point cloud visualization succeeded.")
     except Exception as e:
-        logger("[FAIL] Point cloud visualization crashed:", e)
+        logger(f"[FAIL] Point cloud visualization crashed: {e}")
 
     # 2. Visualize only the ground truth mesh (if available)
     logger("[TEST] Visualizing ONLY the ground truth cylinder mesh (no point cloud)...")
@@ -169,7 +183,7 @@ def main():
         o3d.visualization.draw_plotly([gt_mesh])
         logger("[RESULT] Single mesh visualization succeeded.")
     except Exception as e:
-        logger("[FAIL] Single mesh visualization crashed:", e)
+        logger(f"[FAIL] Single mesh visualization crashed: {e}")
 
     # 3. Visualize point cloud + ground truth mesh
     logger("[TEST] Visualizing point cloud + ground truth mesh...")
@@ -177,7 +191,7 @@ def main():
         o3d.visualization.draw_plotly([pcd, gt_mesh])
         logger("[RESULT] Point cloud + mesh visualization succeeded.")
     except Exception as e:
-        logger("[FAIL] Point cloud + mesh visualization crashed:", e)
+        logger(f"[FAIL] Point cloud + mesh visualization crashed: {e}")
 
     # 4. Visualize all selected meshes + point cloud
     logger("[TEST] Visualizing all detected cylinders as meshes...")
@@ -185,7 +199,7 @@ def main():
         o3d.visualization.draw_plotly([pcd, *meshes])
         logger("[RESULT] Full visualization succeeded.")
     except Exception as e:
-        logger("[FAIL] Full visualization crashed:", e)
+        logger(f"[FAIL] Full visualization crashed: {e}")
         logger("[INFO] Visualization skipped.")
 
 if __name__ == "__main__":

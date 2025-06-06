@@ -4,3 +4,7 @@ ReverseEngineering.pro.user
 **/pycylinder_venv*/*
 .DS_Store
 **/testdata/*
+**/logs/*
+*.egg-info/
+build/
+dist/
