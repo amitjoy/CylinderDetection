@@ -8,7 +8,7 @@ def main():
     CylinderDetector.LOGGER = CylinderLogger(mode='file', log_file='../../logs/cylinder_debug.log')
     logger = CylinderDetector.LOGGER or print
     # Path to test data OBJ file
-    testdata_dir = os.path.join(os.path.dirname(__file__), 'testdata')
+    testdata_dir = os.path.join(os.path.dirname(__file__), 'examples/testdata')
     obj_path = os.path.join(testdata_dir, 'Pipes.obj')
     if not os.path.exists(obj_path):
         msg = f"Test data OBJ file not found: {obj_path}"
