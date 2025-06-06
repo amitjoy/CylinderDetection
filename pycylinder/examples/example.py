@@ -7,8 +7,6 @@ import numpy as np
 import open3d as o3d
 
 # Add the current directory to the path to allow importing local modules
-import os
-import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:

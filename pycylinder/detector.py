@@ -1,22 +1,42 @@
 """
 CylinderDetector: Main detection pipeline
 """
-import os
 import numpy as np
 # Use relative imports for package modules
 from .geometry import Cylinder
-from .utils import fibonacci_sphere
-from .logger import get_logger, CylinderLogger, LogLevel
+from .utils import fibonacci_sphere, fit_cylinder_least_squares
+from .logger import get_logger, LogLevel
 
 class CylinderDetector:
     LOGGER = get_logger()  # Use the module-level logger
     
-    def __init__(self, point_cloud, directions_samples=60, distance_threshold=0.02, normal_threshold=0.95, min_component_points=30, circle_residual=0.01, min_length=0.05, min_inliers=30, max_radius=2.0, angle_thresh=0.1, center_thresh=0.05, radius_thresh=0.05, debug_prints=None):
+    def __init__(self, point_cloud, directions_samples=60, distance_threshold=0.02, normal_threshold=0.95, 
+                 min_component_points=30, circle_residual=0.01, min_length=0.05, min_inliers=30, 
+                 max_radius=2.0, angle_thresh=0.1, center_thresh=0.05, radius_thresh=0.05, 
+                 max_mean_distance_to_surface=0.01, debug_prints=None):
+        """
+        Initialize the CylinderDetector.
+        
+        Args:
+            point_cloud: PointCloud instance containing the 3D points and normals
+            directions_samples: Number of directions to sample for initial detection
+            distance_threshold: Maximum distance between points to be considered neighbors
+            normal_threshold: Minimum dot product between normals for points to be considered similar
+            min_component_points: Minimum number of points in a connected component
+            circle_residual: Maximum allowed residual for circle fitting
+            min_length: Minimum length of a valid cylinder
+            min_inliers: Minimum number of inliers for a valid cylinder
+            max_radius: Maximum allowed radius for a valid cylinder
+            angle_thresh: Maximum angle (in radians) between axes for merging cylinders
+            center_thresh: Maximum distance between centers for merging cylinders
+            radius_thresh: Maximum radius difference for merging cylinders
+            max_mean_distance_to_surface: Maximum allowed mean distance of points to cylinder surface
+            debug_prints: Deprecated, kept for backward compatibility
+        """
         # debug_prints is kept for backward compatibility but not used
         self._debug = debug_prints if debug_prints is not None else False
         self.logger = get_logger()  # Get the module logger
 
-        """point_cloud: PointCloud instance"""
         self.point_cloud = point_cloud
         self.directions_samples = directions_samples
         self.distance_threshold = distance_threshold
@@ -29,6 +49,21 @@ class CylinderDetector:
         self.angle_thresh = angle_thresh
         self.center_thresh = center_thresh
         self.radius_thresh = radius_thresh
+        self.max_mean_distance_to_surface = max_mean_distance_to_surface
+
+        # Cylinder fitting parameters
+        self.min_radius = 0.02  # Minimum cylinder radius in meters
+        self.max_radius = 0.5   # Maximum cylinder radius in meters
+        self.distance_threshold = 0.02  # Increased distance threshold for cylinder fitting (was 0.01)
+        self.ransac_n = 20      # Number of points for RANSAC
+        self.num_iterations = 1000  # Max number of iterations for RANSAC
+        
+        # Validation parameters - made more permissive
+        self.min_inliers = 50    # Reduced minimum number of inliers required (was 100)
+        self.min_cylinder_length = 0.05  # Reduced minimum length of a valid cylinder (was 0.1)
+        self.max_mean_distance_to_surface = 0.08  # Increased max mean distance to surface (was 0.05)
+        self.max_median_distance_to_surface = 0.1  # New parameter for median distance threshold
+        self.mad_multiplier = 3.0  # Increased multiplier for MAD threshold (was 1.5)
 
     def find_connected_components(self, direction):
         """
@@ -40,8 +75,10 @@ class CylinderDetector:
         """
         import numpy as np
         from .geometry import ConnectedComponent
-        points = np.asarray(self.point_cloud.points)
-        normals = np.asarray(self.point_cloud.normals) if self.point_cloud.has_normals() else None
+        
+        # Use the correct methods to get points and normals
+        points = self.point_cloud.to_numpy()
+        normals = self.point_cloud.normals_numpy()  # This will be None if normals aren't available
         N = len(points)
         
         self.LOGGER.debug(f"[find_connected_components] Direction: {direction}, N_points={N}, N_normals={len(normals) if normals is not None else 0}")
@@ -130,7 +167,8 @@ class CylinderDetector:
         """
         import numpy as np
         from .utils import project_points_onto_plane
-        pts = np.asarray(self.point_cloud.points)[component.indices]
+        all_pts = self.point_cloud.to_numpy()
+        pts = all_pts[component.indices]
         plane_point = np.mean(pts, axis=0)
         plane_normal = component.direction
         projected = project_points_onto_plane(pts, plane_point, plane_normal)
@@ -173,14 +211,43 @@ class CylinderDetector:
                 total_circles += 1
                 # Map inliers2d back to 3D indices
                 indices_3d = [comp.indices[i] for i in inliers2d]
-                pts3d = np.asarray(self.point_cloud.points)[indices_3d]
-                # --- Advanced 3D cylinder fitting ---
-                from .utils import fit_cylinder_least_squares
-                center3d, axis, radius = fit_cylinder_least_squares(pts3d, direction_init=comp.direction)
-                candidate = Cylinder(center3d, axis, radius, inliers=indices_3d)
-                if self.is_cylinder_valid(candidate):
-                    total_valid_candidates += 1
-                    cylinders.append(candidate)
+                all_pts = self.point_cloud.to_numpy()
+                pts3d = all_pts[indices_3d]
+                try:
+                    # Fit cylinder to 3D points with improved fitting
+                    center3d, axis, radius = fit_cylinder_least_squares(
+                        pts3d, 
+                        direction_init=comp.direction,
+                        max_radius=self.max_radius,
+                        max_iterations=100,
+                        tolerance=1e-6
+                    )
+                    
+                    # Create cylinder with points and inliers
+                    candidate = Cylinder(
+                        center=center3d,
+                        axis=axis,
+                        radius=radius,
+                        inliers=indices_3d,
+                        points=pts3d  # Pass the actual 3D points
+                    )
+                    
+                    self.logger.debug(f"[detect] Fitted cylinder - "
+                                    f"center: {np.round(center3d, 4)}, "
+                                    f"axis: {np.round(axis, 4)}, "
+                                    f"radius: {radius:.6f}, "
+                                    f"points: {len(pts3d)}")
+                    
+                    if self.is_cylinder_valid(candidate):
+                        total_valid_candidates += 1
+                        cylinders.append(candidate)
+                        self.logger.debug("[detect] Cylinder accepted")
+                    else:
+                        self.logger.debug("[detect] Cylinder rejected during validation")
+                        
+                except Exception as e:
+                    self.logger.warning(f"[detect] Error fitting cylinder: {str(e)}")
+                    continue
         self.logger.debug(f"[detect] Total valid cylinder candidates before merging: {total_valid_candidates}")
         # Post-processing: merge overlapping cylinders
         cylinders = self.merge_cylinders(cylinders)
@@ -189,31 +256,105 @@ class CylinderDetector:
         return cylinders
 
     def is_cylinder_valid(self, cylinder):
+        """Validate cylinder geometry and support.
+        
+        Args:
+            cylinder: The cylinder to validate.
+            
+        Returns:
+            bool: True if the cylinder is valid, False otherwise.
         """
-        Validate cylinder geometry and support.
-        """
-        self.logger.debug(f"[validate_cylinder] Validating cylinder with {len(cylinder.inliers)} points")
-        self.logger.debug(f"[validate_cylinder] Radius: {cylinder.radius}, Length: {cylinder.length}")
-        self.logger.debug(f"[validate_cylinder] Axis: {cylinder.axis}")
-        self.logger.debug(f"[validate_cylinder] Center: {cylinder.center}")
-        self.logger.debug(f"[validate_cylinder] Start: {cylinder.start_point}, End: {cylinder.end_point}")
-        self.logger.debug(f"[validate_cylinder] Points range: {np.min(cylinder.points, axis=0)} to {np.max(cylinder.points, axis=0)}")
-        if len(cylinder.inliers) < self.min_inliers:
-            self.logger.debug(f"[validate_cylinder] Cylinder rejected: too few inliers ({len(cylinder.inliers)} < {self.min_inliers})")
+        try:
+            # Check if we have enough inliers
+            if len(cylinder.inliers) < self.min_inliers:
+                self.logger.debug(
+                    f"Cylinder rejected: too few inliers ({len(cylinder.inliers)} < {self.min_inliers})"
+                )
+                return False
+                
+            # Check radius is within bounds
+            if not (self.min_radius <= cylinder.radius <= self.max_radius):
+                self.logger.debug(
+                    f"Cylinder rejected: invalid radius ({cylinder.radius:.6f} not in "
+                    f"[{self.min_radius:.2f}, {self.max_radius:.2f}])"
+                )
+                return False
+                
+            # Get the points for this cylinder and set them
+            all_pts = self.point_cloud.to_numpy()
+            pts = all_pts[cylinder.inliers]
+            if len(pts) < 3:  # Need at least 3 points to define a cylinder
+                self.logger.debug("Cylinder rejected: too few points after filtering")
+                return False
+                
+            # Update cylinder with points (this will also update length and endpoints)
+            cylinder.points = pts
+            
+            # Check length
+            if cylinder.length < self.min_cylinder_length:
+                self.logger.debug(
+                    f"Cylinder rejected: too short (length {cylinder.length:.6f} < {self.min_cylinder_length:.6f})"
+                )
+                return False
+                
+            # Check if the cylinder has sufficient support (points close to the surface)
+            rel = pts - cylinder.center
+            proj = np.dot(rel, cylinder.axis)
+            radial_vectors = rel - np.outer(proj, cylinder.axis)
+            dist_to_surface = np.abs(np.linalg.norm(radial_vectors, axis=1) - cylinder.radius)
+            
+            # Calculate robust statistics for distance to surface
+            median_dist = np.median(dist_to_surface)
+            mean_dist = np.mean(dist_to_surface)
+            mad = np.median(np.abs(dist_to_surface - median_dist))  # Median Absolute Deviation
+            
+            # Use a dynamic threshold based on the new parameters
+            mad_threshold = self.mad_multiplier * mad
+            
+            # Log the fit quality for debugging
+            self.logger.debug(
+                f"Cylinder fit quality - median: {median_dist:.6f}, mean: {mean_dist:.6f}, "
+                f"MAD: {mad:.6f} (threshold: {mad_threshold:.6f})"
+            )
+            
+            # Check median distance to surface (more robust than mean)
+            if median_dist > self.max_median_distance_to_surface:
+                self.logger.debug(
+                    f"Cylinder rejected: median distance too large ({median_dist:.6f} > "
+                    f"{self.max_median_distance_to_surface:.6f})"
+                )
+                return False
+                
+            # Check mean distance to surface
+            if mean_dist > self.max_mean_distance_to_surface:
+                self.logger.debug(
+                    f"Cylinder rejected: mean distance too large ({mean_dist:.6f} > "
+                    f"{self.max_mean_distance_to_surface:.6f})"
+                )
+                return False
+                
+            # Check for axis stability
+            if np.linalg.norm(cylinder.axis) < 1e-6:  # Check for zero vector
+                self.logger.debug("Cylinder rejected: invalid axis (zero vector)")
+                return False
+                
+            # Check that the cylinder has sufficient extent in 3D space
+            if np.max(proj) - np.min(proj) < self.min_cylinder_length * 0.5:  # At least half the min length
+                self.logger.debug("Cylinder rejected: insufficient extent along axis")
+                return False
+                
+            # Check for degenerate cases (e.g., all points in a plane)
+            if np.max(dist_to_surface) < 1e-6:
+                self.logger.debug("Cylinder rejected: points lie on a plane (zero radius)")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Error validating cylinder: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             return False
-        if not (0 < cylinder.radius < self.max_radius):
-            self.logger.debug(f"[validate_cylinder] Cylinder rejected: invalid radius ({cylinder.radius} not in (0, {self.max_radius}))")
-            return False
-        # Check length (project inliers onto axis)
-        from numpy import dot
-        pts = np.asarray(self.point_cloud.points)[cylinder.inliers]
-        rel = pts - cylinder.center
-        proj = dot(rel, cylinder.axis)
-        length = proj.max() - proj.min()
-        if length < self.min_length:
-            self.logger.debug(f"[validate_cylinder] Cylinder rejected: too short (length {length} < {self.min_length})")
-            return False
-        return True
 
     def merge_cylinders(self, cylinders):
         """
@@ -243,7 +384,22 @@ class CylinderDetector:
                 axes = np.array([c.axis for c in group])
                 radii = np.array([c.radius for c in group])
                 inliers = sum([c.inliers for c in group], [])
-                merged.append(type(group[0])(centers.mean(axis=0), axes.mean(axis=0), radii.mean(), inliers))
+                
+                # Combine points from all cylinders in the group
+                all_points = []
+                for c in group:
+                    if hasattr(c, 'points') and c.points is not None:
+                        all_points.append(c.points)
+                
+                # Create new cylinder with combined points
+                new_cylinder = type(group[0]) (
+                    center=centers.mean(axis=0),
+                    axis=axes.mean(axis=0),
+                    radius=radii.mean(),
+                    inliers=inliers,
+                    points=np.vstack(all_points) if all_points else None
+                )
+                merged.append(new_cylinder)
             used.add(i)
         return merged
 
@@ -274,8 +430,24 @@ class CylinderDetector:
                 centers = np.vstack([best.center, tc.center])
                 axes = np.vstack([best.axis, tc.axis])
                 radii = np.array([best.radius, tc.radius])
+                
+                # Combine points from both cylinders
+                all_points = []
+                for c in [best, tc]:
+                    if hasattr(c, 'points') and c.points is not None:
+                        all_points.append(c.points)
+                
+                # Create new cylinder with combined points
+                new_cylinder = type(best)(
+                    center=centers.mean(axis=0),
+                    axis=axes.mean(axis=0),
+                    radius=radii.mean(),
+                    inliers=all_inliers,
+                    points=np.vstack(all_points) if all_points else None
+                )
+                
                 merged.remove(best)
-                merged.append(type(best)(centers.mean(axis=0), axes.mean(axis=0), radii.mean(), all_inliers))
+                merged.append(new_cylinder)
             else:
                 merged.append(tc)
         return merged

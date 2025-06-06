@@ -4,12 +4,32 @@ Geometry primitives: Cylinder, Circle, ConnectedComponent
 import numpy as np
 
 class Cylinder:
-    def __init__(self, center, axis, radius, inliers=None):
-        self.center = np.asarray(center)
-        self.axis = np.asarray(axis)
+    def __init__(self, center, axis, radius, inliers=None, points=None):
+        """
+        Initialize a cylinder with center, axis, radius, and optional inliers and points.
+        
+        Args:
+            center: 3D point on the cylinder axis
+            axis: 3D vector defining the cylinder axis direction (will be normalized)
+            radius: Radius of the cylinder
+            inliers: List of indices of points belonging to this cylinder
+            points: 3D points belonging to this cylinder
+        """
+        self.center = np.asarray(center, dtype=np.float64)
+        self.axis = np.asarray(axis, dtype=np.float64)
+        self.axis = self.axis / np.linalg.norm(self.axis)  # Ensure unit vector
         self.radius = float(radius)
         self.inliers = inliers if inliers is not None else []
-        self._points = None  # Will store points if they're set explicitly
+        
+        # Initialize cache
+        self._points = None
+        self._length = None
+        self._start_point = None
+        self._end_point = None
+        
+        # If points are provided, use them to initialize
+        if points is not None:
+            self.points = np.asarray(points, dtype=np.float64)
         
     @property
     def points(self):
@@ -31,56 +51,78 @@ class Cylinder:
         return None
         
     @points.setter
-    def points(self, value):
-        """Set the points that define this cylinder.
+    def points(self, points):
+        """Set the points for this cylinder and update derived properties.
         
         Args:
-            value (numpy.ndarray): Array of points with shape (N, 3).
+            points: Nx3 array of 3D points, or None to clear the points.
         """
-        if value is not None:
-            self._points = np.asarray(value)
-        else:
-            self._points = None
+        self._points = np.asarray(points, dtype=np.float64) if points is not None else None
+        self._update_derived_properties()
+    
+    def _update_derived_properties(self):
+        """Update length and endpoints based on current points."""
+        # Clear cached properties
+        self._length = None
+        self._start_point = None
+        self._end_point = None
         
+        if self._points is None or len(self._points) < 2:
+            return
+            
+        try:
+            # Project points onto the cylinder axis
+            rel_points = self._points - self.center
+            projections = np.dot(rel_points, self.axis)
+            
+            if len(projections) > 0:
+                # Calculate length as distance between min and max projections
+                min_proj = np.min(projections)
+                max_proj = np.max(projections)
+                self._length = float(max_proj - min_proj)
+                
+                # Update start and end points
+                self._start_point = self.center + self.axis * min_proj
+                self._end_point = self.center + self.axis * max_proj
+                
+                # Update center to be the midpoint
+                self.center = (self._start_point + self._end_point) / 2
+        except Exception as e:
+            logger = get_logger()
+            logger.warning(f"Error updating cylinder properties: {str(e)}")
+    
     @property
     def length(self) -> float:
-        """Calculate the length of the cylinder based on its points.
+        """Get the length of the cylinder based on its points.
         
         Returns:
             float: The length of the cylinder, or 0 if not enough points are available.
         """
-        if not hasattr(self, '_length'):
-            points = self.points
-            if points is None or len(points) < 2:
-                self._length = 0.0
-            else:
-                try:
-                    # Project points onto the cylinder axis
-                    projections = np.dot(points - self.center, self.axis)
-                    # Calculate the distance between the min and max projections
-                    self._length = float(np.max(projections) - np.min(projections))
-                except Exception as e:
-                    # If any error occurs during calculation, return 0
-                    self._length = 0.0
-        return self._length
+        if self._length is None:
+            self._update_derived_properties()
+        return self._length if self._length is not None else 0.0
         
     @property
     def start_point(self):
-        """Get the start point of the cylinder along its axis."""
-        if not hasattr(self, '_start_point'):
-            if not hasattr(self, '_length') or self._length == 0:
-                return self.center
-            self._start_point = self.center - self.axis * (self._length / 2)
-        return self._start_point
+        """Get the start point of the cylinder along its axis.
+        
+        Returns:
+            np.ndarray: 3D start point of the cylinder.
+        """
+        if self._start_point is None:
+            self._update_derived_properties()
+        return self._start_point if self._start_point is not None else self.center.copy()
         
     @property
     def end_point(self):
-        """Get the end point of the cylinder along its axis."""
-        if not hasattr(self, '_end_point'):
-            if not hasattr(self, '_length') or self._length == 0:
-                return self.center
-            self._end_point = self.center + self.axis * (self._length / 2)
-        return self._end_point
+        """Get the end point of the cylinder along its axis.
+        
+        Returns:
+            np.ndarray: 3D end point of the cylinder.
+        """
+        if self._end_point is None:
+            self._update_derived_properties()
+        return self._end_point if self._end_point is not None else self.center.copy()
 
 class Circle:
     def __init__(self, center, radius, inliers=None):
